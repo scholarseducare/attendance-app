@@ -940,20 +940,46 @@ function renderRecs(){
   recs.sort(function(a,b){return b.date.localeCompare(a.date);});
   if(q) recs=recs.filter(function(r){ return r.entries.some(function(e){return e.name.toLowerCase().includes(q);}); });
   var wrap=document.getElementById('recswrap');
-  if(!recs.length){ wrap.innerHTML='<div class="empty"><div class="ei">📭</div><p>No records found.</p></div>'; return; }
-  wrap.innerHTML=recs.map(function(r){
-    var p=r.entries.filter(function(e){return e.status==='present';}).length;
-    var a=r.entries.filter(function(e){return e.status==='absent';}).length;
-    var stuRows=r.entries.slice().sort(function(a,b){return parseInt(a.roll)-parseInt(b.roll);}).map(function(e){
-      var bg=e.status==='present'?'#F0FFF4':'#FFF5F5';
-      var c=e.status==='present'?'var(--green)':'var(--red)';
-      var lbl=e.status==='present'?'Present':'Absent';
-      return '<tr style="background:'+bg+'"><td><strong>'+esc(e.roll)+'</strong></td><td>'+esc(e.name)+'</td><td><span style="color:'+c+';font-weight:700">'+lbl+'</span></td></tr>';
-    }).join('');
-    return '<div class="rc"><div class="rch"><div><div class="rchn">'+esc(r.className)+'</div><div class="rchm">'+fmt(r.date)+'</div></div>'
-      +'<div class="rpills"><span class="rp g">✅ '+p+'</span><span class="rp r">❌ '+a+'</span></div></div>'
-      +'<div class="twrap" style="border:none;border-radius:0"><table><thead><tr><th>Roll</th><th>Name</th><th>Status</th></tr></thead><tbody>'+stuRows+'</tbody></table></div></div>';
-  }).join('');
+
+  // Collect all unique dates
+  var allDates={};
+  recs.forEach(function(r){ allDates[r.date]=1; });
+  // Add holiday dates (when no search query)
+  if(!q){
+    S.holidays.forEach(function(h){
+      if(!date||h.date===date) allDates[h.date]=1;
+    });
+  }
+  var sortedDates=Object.keys(allDates).sort(function(a,b){return b.localeCompare(a);});
+  if(!sortedDates.length){ wrap.innerHTML='<div class="empty"><div class="ei">📭</div><p>No records found.</p></div>'; return; }
+
+  var html='';
+  sortedDates.forEach(function(d){
+    // Show holiday card
+    if(isHoliday(d)){
+      html+='<div style="background:linear-gradient(90deg,#E65100,#FF6F00);border-radius:11px;padding:12px 16px;margin-bottom:11px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px rgba(230,81,0,.2)">'
+        +'<div style="font-size:1.5rem">🏖️</div>'
+        +'<div><div style="font-weight:800;color:#fff;font-size:.97rem">'+esc(getHolidayReason(d))+'</div>'
+        +'<div style="font-size:.75rem;color:rgba(255,255,255,.85);margin-top:1px">Holiday  •  '+fmt(d)+'</div></div>'
+        +'</div>';
+    }
+    // Show attendance records for this date
+    var dateRecs=recs.filter(function(r){return r.date===d;});
+    dateRecs.forEach(function(r){
+      var p=r.entries.filter(function(e){return e.status==='present';}).length;
+      var a=r.entries.filter(function(e){return e.status==='absent';}).length;
+      var stuRows=r.entries.slice().sort(function(a,b){return parseInt(a.roll)-parseInt(b.roll);}).map(function(e){
+        var bg=e.status==='present'?'#F0FFF4':'#FFF5F5';
+        var c=e.status==='present'?'var(--green)':'var(--red)';
+        var lbl=e.status==='present'?'Present':'Absent';
+        return '<tr style="background:'+bg+'"><td><strong>'+esc(e.roll)+'</strong></td><td>'+esc(e.name)+'</td><td><span style="color:'+c+';font-weight:700">'+lbl+'</span></td></tr>';
+      }).join('');
+      html+='<div class="rc"><div class="rch"><div><div class="rchn">'+esc(r.className)+'</div><div class="rchm">'+fmt(r.date)+'</div></div>'
+        +'<div class="rpills"><span class="rp g">✅ '+p+'</span><span class="rp r">❌ '+a+'</span></div></div>'
+        +'<div class="twrap" style="border:none;border-radius:0"><table><thead><tr><th>Roll</th><th>Name</th><th>Status</th></tr></thead><tbody>'+stuRows+'</tbody></table></div></div>';
+    });
+  });
+  wrap.innerHTML=html||'<div class="empty"><div class="ei">📭</div><p>No records found.</p></div>';
 }
 
 // ── SETTINGS ──────────────────────────────────────────────────────────
@@ -1319,7 +1345,16 @@ function renderDayReport(recs,date,out){
   var dayRecs=recs.filter(function(r){return r.date===date;});
   var totP=0,totA=0;
   dayRecs.forEach(function(r){var c=countRec(r);totP+=c.p;totA+=c.a;});
-  var html='<div class="rep-grid">'+statBox('Total Students',totP+totA,'b')+statBox('Present',totP,'g')+statBox('Absent',totA,'r')+'</div>'+pctBar(totP,totA);
+  var html='';
+  // Show holiday banner if this date is a holiday
+  if(isHoliday(date)){
+    html+='<div style="background:linear-gradient(90deg,#FF6F00,#FFA000);border-radius:12px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;gap:12px">'
+      +'<div style="font-size:2rem">🏖️</div>'
+      +'<div><div style="font-family:\'Baloo 2\',cursive;font-weight:800;color:#fff;font-size:1.1rem">'+esc(getHolidayReason(date))+'</div>'
+      +'<div style="font-size:.8rem;color:rgba(255,255,255,.85)">Holiday — '+fmt(date)+'</div></div>'
+      +'</div>';
+  }
+  html+='<div class="rep-grid">'+statBox('Total Students',totP+totA,'b')+statBox('Present',totP,'g')+statBox('Absent',totA,'r')+'</div>'+pctBar(totP,totA);
   if(!dayRecs.length){html+='<div class="empty"><div class="ei">📭</div><p>No attendance on '+fmt(date)+'</p></div>';out.innerHTML=html;return;}
   html+='<div class="card" style="margin-top:14px;padding:0;overflow:hidden"><div style="background:var(--dark);color:#fff;padding:11px 14px;font-family:\'Baloo 2\',cursive;font-weight:800;font-size:.95rem">📅 '+fmt(date)+' — Class-wise</div><div class="twrap" style="border:none;border-radius:0"><table><thead><tr><th>Class</th><th style="text-align:center">Total</th><th style="text-align:center">✅ P</th><th style="text-align:center">❌ A</th><th style="text-align:center">%</th></tr></thead><tbody>';
   dayRecs.sort(function(a,b){return a.className.localeCompare(b.className);}).forEach(function(r){
@@ -1345,9 +1380,18 @@ function renderMonthReport(recs,month,out){
   if(!mRecs.length){html+='<div class="empty"><div class="ei">📭</div><p>No records for this month.</p></div>';out.innerHTML=html;return;}
   // Day-wise
   html+='<div class="card" style="margin-top:14px;padding:0;overflow:hidden"><div style="background:var(--dark);color:#fff;padding:11px 14px;font-family:\'Baloo 2\',cursive;font-weight:800;font-size:.95rem">📆 Day-wise Summary</div><div class="twrap" style="border:none;border-radius:0"><table><thead><tr><th>Date</th><th style="text-align:center">✅ P</th><th style="text-align:center">❌ A</th><th style="text-align:center">%</th></tr></thead><tbody>';
+  // Add holidays to day-wise view
+  S.holidays.forEach(function(h){
+    if(h.date.substr(0,7)===month&&!byDate[h.date]) byDate[h.date]={p:0,a:0,holiday:true,reason:h.reason};
+    else if(h.date.substr(0,7)===month&&byDate[h.date]) byDate[h.date].holiday=true, byDate[h.date].reason=h.reason;
+  });
   Object.keys(byDate).sort().forEach(function(d){
     var dd=byDate[d];var tot=dd.p+dd.a;var pct=tot?Math.round(dd.p/tot*100):0;
-    html+='<tr><td>'+fmt(d)+'</td><td style="text-align:center;color:var(--green);font-weight:700">'+dd.p+'</td><td style="text-align:center;color:var(--red);font-weight:700">'+dd.a+'</td><td style="text-align:center"><span style="background:'+(pct>=75?'#E8F5E9':pct>=50?'#FFF9C4':'#FFEBEE')+';color:'+(pct>=75?'#2E7D32':pct>=50?'#F57F17':'#C62828')+';padding:2px 7px;border-radius:20px;font-size:.72rem;font-weight:700">'+pct+'%</span></td></tr>';
+    if(dd.holiday){
+      html+='<tr style="background:#FFF3E0"><td>'+fmt(d)+'</td><td colspan="3" style="color:#E65100;font-weight:700;font-size:.82rem">🏖️ '+esc(dd.reason||'Holiday')+'</td></tr>';
+    } else {
+      html+='<tr><td>'+fmt(d)+'</td><td style="text-align:center;color:var(--green);font-weight:700">'+dd.p+'</td><td style="text-align:center;color:var(--red);font-weight:700">'+dd.a+'</td><td style="text-align:center"><span style="background:'+(pct>=75?'#E8F5E9':pct>=50?'#FFF9C4':'#FFEBEE')+';color:'+(pct>=75?'#2E7D32':pct>=50?'#F57F17':'#C62828')+';padding:2px 7px;border-radius:20px;font-size:.72rem;font-weight:700">'+pct+'%</span></td></tr>';
+    }
   });
   html+='</tbody></table></div></div>';
   // Class-wise working days (count unique dates per class)
@@ -1620,7 +1664,10 @@ function exportWorkingDaysPDF(jsPDF){
   var period=document.getElementById('pdf-wd-period').value;
   var month=document.getElementById('pdf-wd-month').value;
   var year=document.getElementById('pdf-wd-year').value;
+  var cid=document.getElementById('pdf-class').value;
   var mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var clsLabel='';
+  if(cid){ var co=S.classes.find(function(c){return c.id===cid;}); if(co) clsLabel=' — '+(co.name+(co.section?' Sec. '+co.section:'')); }
 
   closeM('pdfModal');
   try{
@@ -1638,9 +1685,11 @@ function exportWorkingDaysPDF(jsPDF){
 
     if(period==='month'){
       if(!month){toast('Select a month','er');return;}
-      var mRecs=S.records.filter(function(r){return r.date.substr(0,7)===month;});
+      var mRecs=S.records.filter(function(r){
+        return r.date.substr(0,7)===month && (!cid||r.classId===cid);
+      });
       var mLabel=mn[parseInt(month.substr(5,2))-1]+' '+month.substr(0,4);
-      doc.text('Working Days Report  —  '+mLabel,W/2,26,{align:'center'});
+      doc.text('Working Days Report  —  '+mLabel+clsLabel,W/2,26,{align:'center'});
       y=38;
 
       // Unique working dates
@@ -1670,13 +1719,30 @@ function exportWorkingDaysPDF(jsPDF){
       doc.text('Present',M+90,y+5);doc.text('Absent',M+118,y+5);doc.text('Total',M+146,y+5);doc.text('%',M+166,y+5);
       y+=7;
 
-      dates.forEach(function(d,i){
+      // Add holidays to dates list for PDF
+      var allPdfDates=dates.slice();
+      S.holidays.forEach(function(h){
+        if(h.date.substr(0,7)===month&&allPdfDates.indexOf(h.date)===-1) allPdfDates.push(h.date);
+      });
+      allPdfDates.sort();
+      allPdfDates.forEach(function(d,i){
         if(y+7>H-M){doc.addPage();y=M;}
+        var isHol=isHoliday(d);
+        var dayName=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(d+'T00:00:00').getDay()];
+        if(isHol){
+          doc.setFillColor(255,243,224);doc.rect(M,y,W-2*M,7,'F');
+          doc.setFontSize(8);doc.setFont('helvetica','bold');doc.setTextColor(230,81,0);
+          doc.text(String(i+1),M+4,y+5);
+          doc.text(fmt(d),M+16,y+5);
+          doc.text(dayName,M+55,y+5);
+          doc.text('🏖 '+String(getHolidayReason(d)||'Holiday'),M+90,y+5);
+          y+=7;
+          return;
+        }
         var dayRecs=mRecs.filter(function(r){return r.date===d;});
         var tp=0,ta=0;
         dayRecs.forEach(function(r){var c=countRec(r);tp+=c.p;ta+=c.a;});
         var tot=tp+ta;var pct=tot?Math.round(tp/tot*100):0;
-        var dayName=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(d+'T00:00:00').getDay()];
         if(i%2===0){doc.setFillColor(245,248,255);doc.rect(M,y,W-2*M,7,'F');}
         doc.setFontSize(8);doc.setFont('helvetica','normal');doc.setTextColor(20,20,40);
         doc.text(String(i+1),M+4,y+5);
@@ -1693,8 +1759,8 @@ function exportWorkingDaysPDF(jsPDF){
     } else {
       // Year
       if(!year){toast('Select a year','er');return;}
-      var yRecs=S.records.filter(function(r){return r.date.substr(0,4)===year;});
-      doc.text('Working Days Report  —  Year '+year,W/2,26,{align:'center'});
+      var yRecs=S.records.filter(function(r){return r.date.substr(0,4)===year&&(!cid||r.classId===cid);});
+      doc.text('Working Days Report  —  Year '+year+clsLabel,W/2,26,{align:'center'});
       y=38;
 
       // Total working days
@@ -1804,7 +1870,17 @@ function exportClasswisePDF(jsPDF){
       var cx=M;
       doc.text('Roll',cx+rollW/2,y+4.5,{align:'center'});cx+=rollW;
       doc.text('Student Name',cx+2,y+4.5);cx+=nameW;
-      dates.forEach(function(d){doc.text(String(parseInt(d.split('-')[2])),cx+dayW/2,y+4.5,{align:'center'});cx+=dayW;});
+      dates.forEach(function(d){
+        if(isHoliday(d)){
+          doc.setTextColor(230,81,0);
+          doc.text(String(parseInt(d.split('-')[2])),cx+dayW/2,y+4,{align:'center'});
+          doc.setFontSize(5);doc.text('H',cx+dayW/2,y+6.5,{align:'center'});
+          doc.setFontSize(6.5);doc.setTextColor(255,255,255);
+        } else {
+          doc.text(String(parseInt(d.split('-')[2])),cx+dayW/2,y+4.5,{align:'center'});
+        }
+        cx+=dayW;
+      });
       doc.text('P',cx+totW/2,y+4.5,{align:'center'});cx+=totW;
       doc.text('A',cx+totW/2,y+4.5,{align:'center'});cx+=totW;
       doc.text('%',cx+pctW/2,y+4.5,{align:'center'});
