@@ -1249,11 +1249,27 @@ async function saveStu(){
 
 // ── RESET ─────────────────────────────────────────────────────────────
 async function resetEverything(){
-  if(!confirm('Reset ALL attendance records? This cannot be undone!')) return;
-  var res=await db.from('attendance').delete().neq('id','00000000-0000-0000-0000-000000000000');
-  if(res.error){ toast('❌ '+res.error.message,'er'); return; }
-  S.records=[]; refreshAll(); closeM('resetModal');
-  toast('🗑 All attendance reset. Classes & students kept.','ok');
+  if(!confirm('Reset ALL attendance records + holidays? This cannot be undone!')) return;
+  toast('Deleting...','');
+  var fetchRes = await db.from('attendance').select('date');
+  if(fetchRes.error){ toast('❌ '+fetchRes.error.message,'er'); return; }
+  var dates = [...new Set((fetchRes.data||[]).map(function(r){return r.date;}))];
+  if(dates.length > 0){
+    var res = await db.from('attendance').delete().in('date', dates);
+    if(res.error){ toast('❌ '+res.error.message,'er'); return; }
+  }
+  var hFetch = await db.from('holidays').select('id');
+  if(!hFetch.error && hFetch.data && hFetch.data.length > 0){
+    var hIds = hFetch.data.map(function(h){ return h.id; });
+    await db.from('holidays').delete().in('id', hIds);
+  }
+  S.records = [];
+  S.holidays = [];
+  await loadRecords();
+  await loadHolidays();
+  refreshAll();
+  closeM('resetModal');
+  toast('🗑 Attendance & holidays reset. Classes & students kept.','ok');
 }
 
 // ── REPORTS ───────────────────────────────────────────────────────────
@@ -1427,15 +1443,40 @@ function renderYearReport(recs,year,out){
     var c=countRec(r);byMonth[m].p+=c.p;byMonth[m].a+=c.a;
     if(!isHoliday(r.date))byMonth[m].dates.add(r.date);
   });
+  S.holidays.forEach(function(h){
+    if(h.date.substr(0,4)===year){
+      var m=h.date.substr(0,7);
+      if(!byMonth[m])byMonth[m]={p:0,a:0,dates:new Set()};
+    }
+  });
   var mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  html+='<div class="card" style="margin-top:14px;padding:0;overflow:hidden"><div style="background:var(--dark);color:#fff;padding:11px 14px;font-family:\'Baloo 2\',cursive;font-weight:800;font-size:.95rem">Month-wise Summary</div><div class="twrap" style="border:none;border-radius:0"><table><thead><tr><th>Month</th><th style="text-align:center">📅 Days</th><th style="text-align:center">✅ P</th><th style="text-align:center">❌ A</th><th style="text-align:center">%</th></tr></thead><tbody>';
+  var holidaysByMonth={};
+  S.holidays.forEach(function(h){
+    if(h.date.substr(0,4)===year){
+      var m=h.date.substr(0,7);
+      if(!holidaysByMonth[m])holidaysByMonth[m]=[];
+      holidaysByMonth[m].push(h.reason||'Holiday');
+    }
+  });
+  html+='<div class="card" style="margin-top:14px;padding:0;overflow:hidden"><div style="background:var(--dark);color:#fff;padding:11px 14px;font-family:\'Baloo 2\',cursive;font-weight:800;font-size:.95rem">Month-wise Summary</div><div class="twrap" style="border:none;border-radius:0"><table><thead><tr><th>Month</th><th style="text-align:center">📅 Days</th><th style="text-align:center">🏖️ Hols</th><th style="text-align:center">✅ P</th><th style="text-align:center">❌ A</th><th style="text-align:center">%</th></tr></thead><tbody>';
   Object.keys(byMonth).sort().forEach(function(m){
     var mm=byMonth[m];var tot=mm.p+mm.a;var pct=tot?Math.round(mm.p/tot*100):0;
     var mLabel=mn[parseInt(m.substr(5,2))-1]+' '+m.substr(0,4);
     var wd=mm.dates.size;
-    html+='<tr><td>'+mLabel+'</td><td style="text-align:center;color:var(--primary);font-weight:700">'+wd+'</td><td style="text-align:center;color:var(--green);font-weight:700">'+mm.p+'</td><td style="text-align:center;color:var(--red);font-weight:700">'+mm.a+'</td><td style="text-align:center"><span style="background:'+(pct>=75?'#E8F5E9':pct>=50?'#FFF9C4':'#FFEBEE')+';color:'+(pct>=75?'#2E7D32':pct>=50?'#F57F17':'#C62828')+';padding:2px 7px;border-radius:20px;font-size:.72rem;font-weight:700">'+pct+'%</span></td></tr>';
+    var hCount=(holidaysByMonth[m]||[]).length;
+    html+='<tr><td>'+mLabel+'</td><td style="text-align:center;color:var(--primary);font-weight:700">'+wd+'</td><td style="text-align:center;color:#E65100;font-weight:700">'+(hCount?'🏖️ '+hCount:'—')+'</td><td style="text-align:center;color:var(--green);font-weight:700">'+mm.p+'</td><td style="text-align:center;color:var(--red);font-weight:700">'+mm.a+'</td><td style="text-align:center"><span style="background:'+(pct>=75?'#E8F5E9':pct>=50?'#FFF9C4':'#FFEBEE')+';color:'+(pct>=75?'#2E7D32':pct>=50?'#F57F17':'#C62828')+';padding:2px 7px;border-radius:20px;font-size:.72rem;font-weight:700">'+pct+'%</span></td></tr>';
   });
   html+='</tbody></table></div></div>';
+  var yearHols=S.holidays.filter(function(h){return h.date.substr(0,4)===year;});
+  if(yearHols.length){
+    var dayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    html+='<div class="card" style="margin-top:12px;padding:0;overflow:hidden"><div style="background:linear-gradient(90deg,#E65100,#FF6F00);color:#fff;padding:11px 14px;font-family:\'Baloo 2\',cursive;font-weight:800;font-size:.95rem">🏖️ Holidays in '+year+'</div><div class="twrap" style="border:none;border-radius:0"><table><thead><tr><th>Date</th><th>Day</th><th>Holiday</th></tr></thead><tbody>';
+    yearHols.sort(function(a,b){return a.date.localeCompare(b.date);}).forEach(function(h,i){
+      var dayName=dayNames[new Date(h.date+'T00:00:00').getDay()];
+      html+='<tr style="background:'+(i%2===0?'#FFF3E0':'#FFF8F0')+'"><td style="color:#E65100;font-weight:700">'+fmt(h.date)+'</td><td style="color:#888;font-size:.8rem">'+dayName+'</td><td style="font-weight:700">'+esc(h.reason||'Holiday')+'</td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+  }
   out.innerHTML=html;
 }
 
@@ -1444,6 +1485,7 @@ function renderStudentMonthReport(recs,cid,month,out){
   var mRecs=recs.filter(function(r){return r.date.substr(0,7)===month;});
   var dates=[],dateSet={};
   mRecs.forEach(function(r){if(!dateSet[r.date]){dateSet[r.date]=1;dates.push(r.date);}});
+  S.holidays.forEach(function(h){if(h.date.substr(0,7)===month&&!dateSet[h.date]){dateSet[h.date]=1;dates.push(h.date);}});
   dates.sort();
   var stuMap={};
   cls.students.forEach(function(s){stuMap[s.roll]={name:s.name,p:0,a:0,days:{}};});
@@ -1470,7 +1512,10 @@ function renderStudentMonthReport(recs,cid,month,out){
   html+='<div style="background:#FFEBEE;border-radius:10px;padding:10px 6px;text-align:center;border:1.5px solid #FFCDD2"><div style="font-family:\'Baloo 2\',cursive;font-size:1.5rem;font-weight:800;color:#C62828">'+totA2+'</div><div style="font-size:.62rem;color:#C62828;font-weight:700;text-transform:uppercase">Total Absent</div></div>';
   html+='</div>';
   html+='<div style="overflow-x:auto"><table style="min-width:500px;border-collapse:collapse;font-size:.82rem"><thead><tr style="background:var(--dark);color:#fff"><th style="padding:7px 8px;position:sticky;left:0;background:var(--dark)">Roll</th><th style="padding:7px 8px;position:sticky;left:32px;background:var(--dark)">Name</th>';
-  dates.forEach(function(d){html+='<th style="padding:7px 6px;text-align:center;white-space:nowrap">'+parseInt(d.split('-')[2])+'</th>';});
+  dates.forEach(function(d){
+    var isHol=isHoliday(d);
+    html+='<th style="padding:7px 6px;text-align:center;white-space:nowrap;'+(isHol?'background:#FF6F00;':'')+'">'+parseInt(d.split('-')[2])+(isHol?'<br><span style="font-size:.55rem">🏖</span>':'')+'</th>';
+  });
   html+='<th style="padding:7px 6px;text-align:center;color:#A5D6A7">✅ P</th><th style="padding:7px 6px;text-align:center;color:#EF9A9A">❌ A</th><th style="padding:7px 6px;text-align:center;color:#FFD54F">📅 Days</th><th style="padding:7px 6px;text-align:center">%</th></tr></thead><tbody>';
   rolls.forEach(function(roll,ri){
     var s=stuMap[roll];var tot=s.p+s.a;var pct=tot?Math.round(s.p/tot*100):0;
@@ -1482,6 +1527,7 @@ function renderStudentMonthReport(recs,cid,month,out){
       var st=s.days[d];
       if(st==='present')html+='<td style="text-align:center;color:#2E7D32;font-weight:900;font-size:.85rem">P</td>';
       else if(st==='absent')html+='<td style="text-align:center;color:#C62828;font-weight:900;font-size:.85rem">A</td>';
+      else if(isHoliday(d))html+='<td style="text-align:center;background:#FFF3E0;color:#E65100;font-weight:900;font-size:.8rem">H</td>';
       else html+='<td style="text-align:center;color:#CBD5E1">—</td>';
     });
     html+='<td style="text-align:center;font-weight:700;color:#2E7D32">'+s.p+'</td><td style="text-align:center;font-weight:700;color:#C62828">'+s.a+'</td><td style="text-align:center;color:#1565C0;font-weight:700">'+workDays+'</td><td style="text-align:center"><span style="background:'+pctB+';color:'+pctC+';padding:2px 6px;border-radius:20px;font-size:.7rem;font-weight:700">'+pct+'%</span></td></tr>';
